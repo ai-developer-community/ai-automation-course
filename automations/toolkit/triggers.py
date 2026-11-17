@@ -12,39 +12,37 @@ import hashlib
 import hmac
 import json
 import os
-import sys
 import time
-from pathlib import Path
+from collections.abc import Callable
+from typing import Any, Literal
 
 import uvicorn
 from fastapi import FastAPI, HTTPException, Request
 from starlette.concurrency import run_in_threadpool
 
-from toolkit import agent, shadow
+from toolkit import log, settings, shadow, usage
 
-NAME = Path(sys.argv[0]).stem  # the file that was run, e.g. 04_speed_to_lead
 MAX_AGE = 300  # seconds a signed request stays valid
 
+Check = Literal["token", "signature"]
+_SECRET: dict[str, str] = {"token": "WEBHOOK_TOKEN", "signature": "WEBHOOK_SECRET"}
 
-def _log(severity: str, **fields) -> None:
-    print(json.dumps({"severity": severity, "automation": NAME, **fields}, default=str), flush=True)
 
-
-def _timed(run, *args):
-    agent.tokens = 0
+def _timed(run: Callable[..., Any], *args: Any) -> tuple[Any, dict]:
+    usage.start()  # a count of its own, so runs at the same time don't mix
     start = time.monotonic()
     result = run(*args)
-    return result, {"seconds": round(time.monotonic() - start, 2), "tokens": agent.tokens, "shadow": shadow.on()}
+    return result, {"seconds": round(time.monotonic() - start, 2), "tokens": usage.tokens(), "shadow": shadow.on()}
 
 
-def job(run) -> None:
+def job(run: Callable[[], Any]) -> None:
     """Run once and stop. You start it by hand, or Cloud Scheduler starts it on a timer."""
     try:
         result, stats = _timed(run)
     except Exception as error:
-        _log("ERROR", status="failed", error=repr(error))
+        log.write("ERROR", status="failed", error=repr(error))
         raise  # the run is marked as failed
-    _log("INFO", status="ok", **stats, result=result)
+    log.write("INFO", status="ok", **stats, result=result)
 
 
 # Signatures, the way Stripe and Slack do it. The caller hashes the timestamp and
@@ -72,10 +70,11 @@ def signature_ok(body: bytes, header: str, secret: str) -> bool:
 
 def token_ok(token: str) -> bool:
     # compare_digest takes the same time whether a guess is close or not.
-    return hmac.compare_digest(token.encode(), os.environ["WEBHOOK_TOKEN"].encode())
+    return hmac.compare_digest(token.encode(), settings.get("WEBHOOK_TOKEN").encode())
 
 
-def webhook_app(run, check: str = "token") -> FastAPI:
+def webhook_app(run: Callable[[dict], Any], check: Check = "token") -> FastAPI:
+    settings.require(_SECRET[check])  # no secret, no service: fail at start, not on the first request
     app = FastAPI()
 
     @app.post("/hook")
@@ -84,29 +83,32 @@ def webhook_app(run, check: str = "token") -> FastAPI:
 
         # 1. Who is calling? Reject before any work, or any model call, happens.
         if check == "signature":
-            allowed = signature_ok(body, request.headers.get("x-signature", ""), os.environ["WEBHOOK_SECRET"])
+            allowed = signature_ok(body, request.headers.get("x-signature", ""), settings.get("WEBHOOK_SECRET"))
         else:
             allowed = token_ok(request.headers.get("x-token", ""))
         if not allowed:
-            _log("WARNING", status="rejected", reason=f"bad {check}")
+            log.write("WARNING", status="rejected", reason=f"bad {check}")
             raise HTTPException(401, f"bad {check}")
 
         # 2. Run it.
         try:
             payload = json.loads(body or b"{}")
             result, stats = await run_in_threadpool(_timed, run, payload)
+        except settings.MissingSetting as error:  # our mistake, not the caller's: alert on it
+            log.write("ERROR", status="failed", error=str(error))
+            raise HTTPException(500, "failed") from error
         except (KeyError, ValueError) as error:  # the caller sent something the automation can't use
-            _log("WARNING", status="bad request", error=str(error))
-            raise HTTPException(400, f"bad request: {error}")
+            log.write("WARNING", status="bad request", error=str(error))
+            raise HTTPException(400, f"bad request: {error}") from error
         except Exception as error:
-            _log("ERROR", status="failed", error=repr(error))
-            raise HTTPException(500, "failed")  # the caller can try again
-        _log("INFO", status="ok", **stats, result=result)
+            log.write("ERROR", status="failed", error=repr(error))
+            raise HTTPException(500, "failed") from error  # the caller can try again
+        log.write("INFO", status="ok", **stats, result=result)
         return result
 
     return app
 
 
-def webhook(run, check: str = "token") -> None:
+def webhook(run: Callable[[dict], Any], check: Check = "token") -> None:
     """Wait for requests. Another system starts a run by sending a POST to /hook."""
     uvicorn.run(webhook_app(run, check), host="0.0.0.0", port=int(os.environ.get("PORT", "8080")))  # Cloud Run sets PORT

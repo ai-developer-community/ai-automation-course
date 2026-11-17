@@ -29,12 +29,17 @@ way agent.py signs in, so the key can go once Google adds it there.
 import os
 from dataclasses import dataclass
 from functools import cache
+from typing import Any, cast
 
 from google import genai
 
-from toolkit import agent, retry
+from toolkit import agent, retry, usage
 
 MODEL = os.environ.get("DECISION_MODEL", "gemini-decision-1")
+
+
+# A question in the shape the API takes. The helpers below build it; the API checks it.
+Question = dict[str, Any]
 
 
 @dataclass
@@ -43,20 +48,20 @@ class Answer:
     confidence: float   # how sure the model is of that answer, from 0 to 1
 
 
-def yes_no(question: str, yes: str = "", no: str = "") -> dict:
+def yes_no(question: str, yes: str = "", no: str = "") -> Question:
     """A yes or no question. `yes` and `no` can say what each answer means."""
-    question = {"type": "noul", "instructions": question}  # "noul" is the API's name for a yes or no question
+    spec: Question = {"type": "noul", "instructions": question}  # "noul" is the API's name for a yes or no question
     if yes and no:
-        question["criteria"] = {"true_description": yes, "false_description": no}
-    return question
+        spec["criteria"] = {"true_description": yes, "false_description": no}
+    return spec
 
 
-def choice(question: str, options: dict[str, str]) -> dict:
+def choice(question: str, options: dict[str, str]) -> Question:
     """Pick exactly one. `options` maps each option's name to what it means."""
     return {"type": "choice", "instructions": question, "criteria": options}
 
 
-def score(question: str, levels: list[str]) -> dict:
+def score(question: str, levels: list[str]) -> Question:
     """Place it on a scale. `levels` describes each step, lowest first: the first is 0, the next is 1."""
     return {"type": "score", "instructions": question, "criteria": levels}
 
@@ -68,12 +73,14 @@ def _client() -> genai.Client:
     return genai.Client(api_key=key, http_options={"api_version": "v1beta"}) if key else agent.client()
 
 
-def ask(text: str, **questions: dict) -> dict[str, Answer]:
+def ask(text: str, **questions: Question) -> dict[str, Answer]:
     """Ask every question about one piece of text, in one request. Answers come back under the same names."""
-    response = retry.call(lambda: _client().decisions.create(model=MODEL, input=text, questions=questions))
+    response = retry.call(lambda: _client().decisions.create(model=MODEL, input=text, questions=cast(Any, questions)))
     if response.usage:
-        agent.tokens += response.usage.total_tokens or 0
+        usage.add(response.usage.total_tokens or 0)
     if not response.answers:
         raise RuntimeError(f"the decision model gave no answers: {response.prompt_feedback}")
     # Each answer keeps its value in a field named after its type: noul, choice or score.
-    return {name: Answer(getattr(answer, answer.type), answer.confidence) for name, answer in response.answers.items()}
+    # The library also types an "unknown" answer with no confidence; the API only sends the three we ask for.
+    return {name: Answer(getattr(answer, answer.type), answer.confidence)  # pyright: ignore[reportAttributeAccessIssue]
+            for name, answer in response.answers.items()}

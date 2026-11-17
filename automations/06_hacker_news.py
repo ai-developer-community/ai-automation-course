@@ -22,6 +22,7 @@ Safe to run at any time: a story is saved once, however long it stays on the fro
 """
 
 from datetime import datetime, timezone
+from typing import Any
 from urllib.parse import urlsplit
 
 import httpx
@@ -41,7 +42,7 @@ RELEVANT = decide.yes_no(
 )
 
 
-def fetch(path: str):
+def fetch(path: str) -> Any:  # the API returns JSON: a story, or a list of ids
     """One call to the Hacker News API."""
     return retry.call(
         lambda: httpx.get(f"{API}/{path}.json", timeout=15).raise_for_status().json()
@@ -51,9 +52,8 @@ def fetch(path: str):
 def relevance(story: dict) -> float:
     """The chance this story is one an AI developer wants, from 0 to 1. Judged on the headline and the site."""
     site = urlsplit(story.get("url", "")).hostname or "news.ycombinator.com"
-    return decide.ask(f"Headline: {story['title']}\nSite: {site}", relevant=RELEVANT)[
-        "relevant"
-    ].value
+    answers = decide.ask(f"Headline: {story['title']}\nSite: {site}", relevant=RELEVANT)
+    return float(answers["relevant"].value)
 
 
 def run() -> dict:

@@ -94,3 +94,50 @@ def test_retry_tries_temporary_failures_again_and_gives_up_on_others():
     with pytest.raises(ValueError):
         retry.call(bad, wait=0)
     assert len(calls) == 1
+
+
+def test_a_missing_setting_is_our_failure_not_the_callers(client, monkeypatch, capsys):
+    from toolkit import settings, slack
+
+    monkeypatch.delenv("SLACK_WEBHOOK_URL", raising=False)
+    monkeypatch.setenv("SHADOW", "false")
+    app = triggers.webhook_app(lambda payload: slack.post("hi"))
+    response = TestClient(app).post("/hook", json={}, headers={"X-Token": "right-token"})
+    assert response.status_code == 500
+    assert '"severity": "ERROR"' in capsys.readouterr().out
+    with pytest.raises(settings.MissingSetting):
+        settings.get("SLACK_WEBHOOK_URL")
+
+
+def test_a_webhook_without_its_secret_will_not_start(monkeypatch):
+    from toolkit import settings
+
+    monkeypatch.delenv("WEBHOOK_SECRET", raising=False)
+    with pytest.raises(settings.MissingSetting):
+        triggers.webhook_app(lambda payload: {}, check="signature")
+
+
+def test_runs_at_the_same_time_count_their_own_tokens():
+    import threading
+
+    from toolkit import usage
+
+    started = threading.Barrier(2)
+    counts = {}
+
+    def run(name: str, tokens: int):
+        usage.add(tokens)
+        started.wait()  # both runs are now in progress
+        usage.add(tokens)
+        return name
+
+    def go(name: str, tokens: int):
+        _, stats = triggers._timed(run, name, tokens)
+        counts[name] = stats["tokens"]
+
+    threads = [threading.Thread(target=go, args=("a", 10)), threading.Thread(target=go, args=("b", 1000))]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    assert counts == {"a": 20, "b": 2000}

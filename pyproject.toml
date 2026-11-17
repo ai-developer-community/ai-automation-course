@@ -17,8 +17,34 @@ dependencies = [
 [dependency-groups]
 dev = [
     "ipykernel>=7.4.0",
+    "pyright>=1.1.414",
     "pytest>=8",
+    "ruff>=0.17.5",
 ]
 
 [tool.pytest.ini_options]
 pythonpath = ["automations"]
+
+[tool.ruff]
+line-length = 140
+src = ["automations"]
+extend-exclude = ["notebooks"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "ANN"]
+ignore = [
+    "ANN401",  # Any is allowed where a value really can be anything, such as a model's tool result
+    "B008",    # FastAPI declares request bodies with Body(...) in defaults
+    "UP017",   # timezone.utc, as shown in the course video
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["ANN"]
+
+[tool.pyright]
+include = ["automations", "tools"]
+extraPaths = ["automations"]
+pythonVersion = "3.12"
+typeCheckingMode = "standard"
+venvPath = "."
+venv = ".venv"

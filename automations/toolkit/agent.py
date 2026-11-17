@@ -11,21 +11,20 @@ VERTEX_LOCATION is where the model runs. "global" has every model, and new
 models often start there. Set a region, such as europe-west2, to pin where a
 customer's data is processed. Check the model you pick is offered in that region.
 """
-import json
 import os
+from collections.abc import Callable
 from functools import cache
+from typing import Any
 
 import httpx
 from google import genai
 from google.genai import types
+from pydantic import BaseModel
 
-from toolkit import retry
+from toolkit import log, retry, usage
 
 MODEL = os.environ.get("GEMINI_MODEL", "gemini-3.8-flash")
 LOCATION = os.environ.get("VERTEX_LOCATION", "global")
-
-tokens = 0  # tokens used so far in this run; the trigger logs it
-
 
 @cache
 def client() -> genai.Client:
@@ -34,16 +33,15 @@ def client() -> genai.Client:
     return genai.Client(vertexai=True, project=project, location=LOCATION)
 
 
-def _generate(contents, config: types.GenerateContentConfig) -> types.GenerateContentResponse:
+def _generate(contents: types.ContentListUnionDict, config: types.GenerateContentConfig) -> types.GenerateContentResponse:
     """One call to the model, retried if the failure is temporary, with its tokens counted."""
-    global tokens
     response = retry.call(lambda: client().models.generate_content(model=MODEL, contents=contents, config=config))
     if response.usage_metadata:
-        tokens += response.usage_metadata.total_token_count or 0
+        usage.add(response.usage_metadata.total_token_count or 0)
     return response
 
 
-def ask(prompt: str, shape=None):
+def ask(prompt: str, shape: type[BaseModel] | None = None) -> Any:
     """Ask the model one thing.
 
     shape:  a pydantic class. The answer comes back as that class instead of text.
@@ -62,7 +60,8 @@ def search(query: str) -> tuple[str, list[str]]:
     response = _generate(f"Search Google and report what you find, with dates: {query}",
                          types.GenerateContentConfig(tools=[types.Tool(google_search=types.GoogleSearch())]))
     found = response.candidates[0].grounding_metadata if response.candidates else None
-    links = [_real_link(chunk.web.uri) for chunk in (found.grounding_chunks if found else None) or [] if chunk.web]
+    chunks = (found.grounding_chunks if found else None) or []
+    links = [_real_link(chunk.web.uri) for chunk in chunks if chunk.web and chunk.web.uri]
     return response.text or "", list(dict.fromkeys(links))  # each link once, in the order found
 
 
@@ -83,7 +82,7 @@ def run(goal: str, tools: list, turns: int = 20) -> str:
     An agent is this loop and nothing more: ask the model what to do next, run the
     tool it asked for, show it the result, and ask again, until it answers in words.
     """
-    named = {tool.__name__: tool for tool in tools}
+    named: dict[str, Callable[..., Any]] = {tool.__name__: tool for tool in tools}
     # Tell the library not to run the tools itself: this loop does it, so each step is logged and counted.
     config = types.GenerateContentConfig(
         tools=tools, automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True))
@@ -92,17 +91,18 @@ def run(goal: str, tools: list, turns: int = 20) -> str:
         response = _generate(history, config)
         if not response.function_calls:
             return response.text or ""  # no tool asked for: the model is done
-        history.append(response.candidates[0].content)
+        if response.candidates and response.candidates[0].content:
+            history.append(response.candidates[0].content)  # what the model asked for, so it sees its own turn
         results = []
         for call in response.function_calls:
+            name = call.name or ""
             try:
-                result = named[call.name](**call.args)
+                result = named[name](**(call.args or {}))
             except Exception as error:
                 result = f"That failed: {error}"  # tell the model, so it can try something else
-            print(json.dumps({"severity": "INFO", "turn": turn, "tool": call.name, "args": call.args,
-                              "result": str(result)[:300]}, default=str), flush=True)
+            log.write("INFO", turn=turn, tool=name, args=call.args, result=str(result)[:300])
             # The model can't count its own turns, so every result says how many are left.
             results.append(types.Part.from_function_response(
-                name=call.name, response={"result": result, "turns_left": turns - turn}))
+                name=name, response={"result": result, "turns_left": turns - turn}))
         history.append(types.Content(role="user", parts=results))
     return "Stopped: out of turns."

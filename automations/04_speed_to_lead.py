@@ -24,7 +24,6 @@ Shadow mode is on unless SHADOW=false: everything runs, nothing is sent.
     uv run python tools/send_lead.py http://localhost:8080
 """
 import hashlib
-import json
 import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -32,7 +31,7 @@ from pathlib import Path
 
 from pydantic import BaseModel, EmailStr, Field
 
-from toolkit import agent, decide, mail, sheets, slack, triggers
+from toolkit import agent, decide, log, mail, sheets, slack, triggers
 
 TAB = "Leads"
 SERVICES = (Path(__file__).parent / "services.md").read_text()
@@ -86,8 +85,8 @@ def triage(lead: Lead) -> Triage:
     answers = decide.ask(f"Name: {lead.name}\nCompany: {lead.company or 'not given'}\nMessage: {lead.message}",
                          **QUESTIONS)
     service = answers["service"]
-    return Triage(real=answers["real"].value, urgency=answers["urgency"].value,
-                  service=service.value if service.confidence >= SURE else None)
+    return Triage(real=float(answers["real"].value), urgency=float(answers["urgency"].value),
+                  service=str(service.value) if service.confidence >= SURE else None)
 
 
 def write_proposal(lead: Lead, service: str | None) -> Proposal:
@@ -113,7 +112,7 @@ def safe_to_send(proposal: Proposal) -> bool:
 
 def warn(what: str, error: Exception) -> None:
     """Say why a model step was skipped, in the logs. The run carries on."""
-    print(json.dumps({"severity": "WARNING", "what": what, "reason": repr(error)}), flush=True)
+    log.write("WARNING", what=what, reason=repr(error))
 
 
 def run(payload: dict) -> dict:
@@ -153,7 +152,7 @@ def run(payload: dict) -> dict:
             status = "proposal sent" if safe_to_send(proposal) else status
         except Exception as error:
             warn("proposal not written", error)
-    if status == "proposal sent":
+    if proposal and status == "proposal sent":
         sent = mail.send(lead.email, proposal.subject, proposal.body, key=lead_id)
         status = status if sent else "proposal ready (shadow mode)"
     else:
@@ -163,7 +162,7 @@ def run(payload: dict) -> dict:
     result = save(status, proposal.body if proposal else "")
 
     # 7. Tell the team it went. After the save, so a Slack problem here can't lose the lead.
-    if status == "proposal sent":
+    if proposal and status == "proposal sent":
         slack.post(f"Proposal sent to {who}: {proposal.subject}")
     return result
 

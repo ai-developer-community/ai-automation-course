@@ -71,6 +71,9 @@ The code stays in charge all the way up. It sets the thresholds on the decision 
 |---|---|
 | [`triggers.py`](automations/toolkit/triggers.py) | `triggers.job(run)` and `triggers.webhook(run)`, with a token or a signature check. One JSON log line per run |
 | [`shadow.py`](automations/toolkit/shadow.py) | Shadow mode: everything runs and nothing is sent. On unless `SHADOW=false` |
+| [`settings.py`](automations/toolkit/settings.py) | `settings.get(name)`: a setting that must be there. A missing one fails as an ERROR, so the alert fires |
+| [`log.py`](automations/toolkit/log.py) | `log.write(severity, **fields)`: one JSON line for Cloud Logging, with the automation's name |
+| [`usage.py`](automations/toolkit/usage.py) | Counts the tokens each run uses, separately for runs at the same time |
 | [`retry.py`](automations/toolkit/retry.py) | Tries a call again on a temporary failure, waiting longer each time |
 | [`agent.py`](automations/toolkit/agent.py) | Gemini on Vertex AI, in the region you pick. `agent.ask(prompt, shape=...)` is one call, `agent.search(query)` searches Google, and `agent.run(goal, tools)` is the agent loop |
 | [`decide.py`](automations/toolkit/decide.py) | `decide.ask(text, name=question, ...)`: quick judgments from a decision model. `yes_no`, `choice` and `score` questions, all in one request |
@@ -101,6 +104,16 @@ Get an email when anything fails:
 
 ```
 ALERT_EMAIL=you@example.com ./alerts.sh
+```
+
+## Checks and code standards
+
+[STANDARDS.md](STANDARDS.md) has the rules for this code: types, settings, logging, failure handling and tests. `CLAUDE.md` tells Claude Code to follow them. Three checks run on every push, and should pass before you deploy:
+
+```
+uv run ruff check .    # lint and missing type annotations
+uv run pyright         # type check
+uv run pytest -q       # tests, with fakes
 ```
 
 ## Run the demos

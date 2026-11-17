@@ -6,6 +6,7 @@ again won't fix it.
 """
 import random
 import time
+from collections.abc import Callable
 
 import httpx
 
@@ -23,7 +24,7 @@ def _temporary(error: Exception) -> bool:
     return isinstance(status, int) and status in TEMPORARY
 
 
-def call(fn, attempts: int = 4, wait: float = 1.0):
+def call[T](fn: Callable[[], T], attempts: int = 4, wait: float = 1.0) -> T:
     """Run fn(). On a temporary failure wait 1s, 2s, 4s (plus a little random), then try again."""
     for attempt in range(1, attempts + 1):
         try:
@@ -32,3 +33,4 @@ def call(fn, attempts: int = 4, wait: float = 1.0):
             if attempt == attempts or not _temporary(error):
                 raise
             time.sleep(wait * 2 ** (attempt - 1) + random.random() * wait)
+    raise AssertionError("unreachable: the last attempt returns or raises")

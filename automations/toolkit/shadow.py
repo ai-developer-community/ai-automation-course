@@ -5,17 +5,18 @@ email, a Slack message) asks shadow.skip first. In shadow mode that step logs
 what it would have done and does nothing, so you can run an automation on real
 data and read the logs before you switch it on.
 """
-import json
 import os
+
+from toolkit import log
 
 
 def on() -> bool:
     return os.environ.get("SHADOW", "true").lower() != "false"
 
 
-def skip(action: str, detail) -> bool:
+def skip(action: str, detail: object) -> bool:
     """True when shadow mode is on, after logging what would have happened."""
     if not on():
         return False
-    print(json.dumps({"severity": "INFO", "shadow": True, "would": action, "detail": detail}, default=str))
+    log.write("INFO", shadow=True, would=action, detail=detail)
     return True

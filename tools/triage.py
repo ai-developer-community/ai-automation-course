@@ -15,10 +15,11 @@ from pathlib import Path
 
 AUTOMATIONS = Path(__file__).parents[1] / "automations"
 sys.path.insert(0, str(AUTOMATIONS))
-from toolkit import agent, decide  # noqa: E402
+from toolkit import decide, usage  # noqa: E402
 
 # Speed to lead holds the questions and the thresholds. Its file name starts with a number, so load it by path.
 spec = importlib.util.spec_from_file_location("speed_to_lead", AUTOMATIONS / "04_speed_to_lead.py")
+assert spec and spec.loader
 lead = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(lead)
 
@@ -43,4 +44,4 @@ rows = [
 print(f"\n{message}\n")
 for name, value, answer, meaning in rows:
     print(f"  {name:8} {value:22} {answer.confidence:4.0%} sure   {meaning}")
-print(f"\n  one request, {took} ms, {agent.tokens} tokens\n")
+print(f"\n  one request, {took} ms, {usage.tokens()} tokens\n")
