@@ -86,8 +86,8 @@ New to Google Cloud, the terminal or Python? Follow [SETUP.md](SETUP.md). It cov
 If you have done this before, you need a Google Cloud project with billing on, the [gcloud CLI](https://cloud.google.com/sdk/docs/install) and [uv](https://docs.astral.sh/uv/). Docker is not needed: the image is built on Google Cloud.
 
 ```
-git clone https://github.com/ai-developer-community/advanced-ai-automation.git
-cd advanced-ai-automation
+git clone https://github.com/ai-developer-community/ai-automation-course.git
+cd ai-automation-course
 cp .env.example .env          # fill in PROJECT, WEBHOOK_TOKEN and WEBHOOK_SECRET
 uv run pytest                 # uses fakes, no Google account needed
 gcloud auth login

@@ -2,7 +2,7 @@
 
 The three examples from the course, in order, with the commands to copy. Most steps run twice: once on your laptop and once on Google Cloud. The automation is the same file both times.
 
-Run every command from the `advanced-ai-automation` folder.
+Run every command from the `ai-automation-course` folder.
 
 ## Set up, once
 

@@ -78,8 +78,8 @@ A browser window opens. Sign in with the same Google account and allow access. T
 ## 4. Get the code
 
 ```
-git clone https://github.com/ai-developer-community/advanced-ai-automation.git
-cd advanced-ai-automation
+git clone https://github.com/ai-developer-community/ai-automation-course.git
+cd ai-automation-course
 cp .env.example .env
 ```
 
